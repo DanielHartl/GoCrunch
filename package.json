@@ -1,0 +1,75 @@
+{
+  "name": "gocrunch",
+  "displayName": "GoCrunch",
+  "description": "Continuous-test-style coverage and CodeLens for Go, inspired by NCrunch.",
+  "version": "0.0.1",
+  "publisher": "gocrunch",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Testing"
+  ],
+  "activationEvents": [
+    "onLanguage:go"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "gocrunch.runTest",
+        "title": "GoCrunch: Run Test"
+      },
+      {
+        "command": "gocrunch.debugTest",
+        "title": "GoCrunch: Debug Test"
+      },
+      {
+        "command": "gocrunch.runAllTests",
+        "title": "GoCrunch: Run All Tests"
+      },
+      {
+        "command": "gocrunch.refreshCoverage",
+        "title": "GoCrunch: Refresh Coverage"
+      },
+      {
+        "command": "gocrunch.openTest",
+        "title": "GoCrunch: Open Test Definition"
+      }
+    ],
+    "configuration": {
+      "title": "GoCrunch",
+      "properties": {
+        "gocrunch.goPath": {
+          "type": "string",
+          "default": "go",
+          "description": "Path to the Go binary."
+        },
+        "gocrunch.testTimeout": {
+          "type": "number",
+          "default": 60,
+          "description": "Per-test timeout in seconds."
+        },
+        "gocrunch.autoRunOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically rerun affected tests on save (post-MVP)."
+        }
+      }
+    }
+  },
+  "extensionDependencies": [
+    "golang.go"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  }
+}

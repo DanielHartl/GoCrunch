@@ -1,0 +1,110 @@
+{
+  "version": 2,
+  "files": {
+    "c:\\Users\\danie\\source\\repos\\GoCrunch\\testdata\\sample-project\\math.go": {
+      "3": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAdd",
+          "TestAddAndSub"
+        ],
+        "failingBy": []
+      },
+      "4": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAdd",
+          "TestAddAndSub"
+        ],
+        "failingBy": []
+      },
+      "5": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAdd",
+          "TestAddAndSub"
+        ],
+        "failingBy": []
+      },
+      "7": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestSub",
+          "TestSubFail",
+          "TestAddAndSub"
+        ],
+        "failingBy": [
+          "TestSubFail"
+        ]
+      },
+      "8": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestSub",
+          "TestSubFail",
+          "TestAddAndSub"
+        ],
+        "failingBy": [
+          "TestSubFail"
+        ]
+      },
+      "9": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestSub",
+          "TestSubFail",
+          "TestAddAndSub"
+        ],
+        "failingBy": [
+          "TestSubFail"
+        ]
+      },
+      "11": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAbs"
+        ],
+        "failingBy": []
+      },
+      "12": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAbs"
+        ],
+        "failingBy": []
+      },
+      "13": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAbs"
+        ],
+        "failingBy": []
+      },
+      "14": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAbs"
+        ],
+        "failingBy": []
+      },
+      "15": {
+        "executable": true,
+        "mixed": false,
+        "coveredBy": [
+          "TestAbs"
+        ],
+        "failingBy": []
+      }
+    }
+  }
+}
