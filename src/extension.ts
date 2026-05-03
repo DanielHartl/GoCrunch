@@ -1,3 +1,4 @@
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { GoTestCodeLensProvider } from './ui/codeLens';
@@ -5,6 +6,7 @@ import { CoverageDecorations } from './ui/decorations';
 import { CoverageHoverProvider } from './ui/hover';
 import { CoverageStore } from './state/coverageStore';
 import { FailureStore } from './state/failureStore';
+import { TestRegistry } from './state/testRegistry';
 import {
   listAllTests,
   runSingleTest,
@@ -169,6 +171,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(decorations);
 
   const testLocator = new TestLocator();
+  const testRegistry = new TestRegistry();
   const failureStore = new FailureStore();
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(
@@ -235,7 +238,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.languages.registerHoverProvider(
       { language: 'go', scheme: 'file' },
-      new CoverageHoverProvider(store, testLocator, failureStore),
+      new CoverageHoverProvider(store, testLocator, failureStore, testRegistry),
     ),
   );
 
@@ -262,12 +265,15 @@ export function activate(context: vscode.ExtensionContext): void {
           const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(arg.packageDir));
           if (folder) {
             try {
-              importPathToDir = buildImportPathToDirMap(await listAllTests(folder.uri.fsPath, opts));
+              const enumerations = await listAllTests(folder.uri.fsPath, opts);
+              importPathToDir = buildImportPathToDirMap(enumerations);
+              testRegistry.populateFromEnumerations(enumerations);
             } catch {
               // ignore — attribution will simply skip until we have a map
             }
           }
         }
+        testRegistry.set(arg.testName, arg.packageDir);
         await ingestResultIntoStore(store, result, importPathToDir, channel);
         recordFailureOutput(failureStore, result);
         decorations.refreshAll();
@@ -324,38 +330,62 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
           importPathToDir = buildImportPathToDirMap(enumerations);
+          testRegistry.clear();
+          testRegistry.populateFromEnumerations(enumerations);
           // a full run is the source of truth — drop stale per-test entries
           store.clear();
           failureStore.clear();
 
-          const total = enumerations.reduce((n, e) => n + e.tests.length, 0);
+          const items = enumerations.flatMap((e) =>
+            e.tests.map((test) => ({
+              packageDir: e.packageDir,
+              packageImportPath: e.packageImportPath,
+              test,
+            })),
+          );
+          const total = items.length;
           if (total === 0) {
             vscode.window.showInformationMessage('GoCrunch: no tests found');
             setSummary('GoCrunch: no tests');
             return;
           }
+
+          const cfgParallelism = vscode.workspace
+            .getConfiguration('gocrunch')
+            .get<number>('parallelism', 0);
+          const concurrency = Math.max(
+            1,
+            Math.min(total, cfgParallelism > 0 ? cfgParallelism : os.cpus().length),
+          );
+          channel.appendLine(`Running ${total} test(s) with parallelism=${concurrency}`);
+
+          let cursor = 0;
           let done = 0;
           let passed = 0;
           let failed = 0;
-          for (const e of enumerations) {
-            for (const test of e.tests) {
+          const worker = async (): Promise<void> => {
+            while (true) {
               if (token.isCancellationRequested) {
-                channel.appendLine('[CANCELLED]');
-                break;
+                return;
               }
+              const i = cursor++;
+              if (i >= items.length) {
+                return;
+              }
+              const { packageDir, packageImportPath, test } = items[i];
               progress.report({
                 message: `${test} (${done + 1}/${total})`,
                 increment: (1 / total) * 100,
               });
               try {
-                const result = await runSingleTest(e.packageDir, test, opts);
+                const result = await runSingleTest(packageDir, test, opts);
                 if (result.passed) {
                   passed++;
                 } else {
                   failed++;
                 }
                 channel.appendLine(
-                  `[${result.passed ? 'PASS' : 'FAIL'}] ${e.packageImportPath}.${test} (${result.durationMs}ms)`,
+                  `[${result.passed ? 'PASS' : 'FAIL'}] ${packageImportPath}.${test} (${result.durationMs}ms)`,
                 );
                 await ingestResultIntoStore(store, result, importPathToDir, channel);
                 recordFailureOutput(failureStore, result);
@@ -365,9 +395,10 @@ export function activate(context: vscode.ExtensionContext): void {
               }
               done++;
             }
-            if (token.isCancellationRequested) {
-              break;
-            }
+          };
+          await Promise.all(Array.from({ length: concurrency }, () => worker()));
+          if (token.isCancellationRequested) {
+            channel.appendLine('[CANCELLED]');
           }
           if (cp) {
             await store.saveTo(cp);

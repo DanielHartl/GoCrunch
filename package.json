@@ -64,6 +64,12 @@
           "type": "string",
           "default": "./...",
           "description": "Value passed to 'go test -coverpkg'. Default './...' instruments every package in the module, so a test in package A can attribute coverage to source in package B. Set to an empty string to disable cross-package attribution (faster, smaller profiles)."
+        },
+        "gocrunch.parallelism": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "How many tests to run concurrently during 'Run All / Refresh Coverage'. 0 = auto (CPU count). Set to 1 to run sequentially (easier to read the output channel), or any positive number to cap parallelism."
         }
       }
     }

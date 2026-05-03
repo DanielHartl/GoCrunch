@@ -7,9 +7,9 @@ Continuous-test-style coverage and CodeLens for Go inside VS Code, inspired by N
 - **CodeLens** above every `func TestXxx(t *testing.T)`: `▶ run test` and `🐞 debug test`.
 - **Gutter bars** in production code:
   - Green — line is covered by at least one test.
-  - Red — line is executable but no test reached it.
+  - Grey — line is executable but no test reached it.
   - Yellow — partially covered (some blocks on the line are hit, others aren't).
-  - Bright red + faint line-background tint — at least one **failing** test runs through this line. This preempts the green/yellow/dim-red states so a regression is impossible to miss.
+  - Bright red + faint line-background tint — at least one **failing** test runs through this line. Red is reserved exclusively for this state so a regression is impossible to miss.
 - **Hover on a covered line** lists every test that hits the line, sorted failing-first:
   - `$(error)` for failing tests (bold name), `$(pass)` for passing.
   - Click the test name to jump straight to its `func TestXxx` definition.
@@ -31,6 +31,7 @@ Continuous-test-style coverage and CodeLens for Go inside VS Code, inspired by N
 | `gocrunch.goPath` | `go` | Go binary used for `go test` / `go list`. |
 | `gocrunch.testTimeout` | `60` | Per-test timeout in seconds (`-timeout=Ns`). |
 | `gocrunch.coverPkg` | `./...` | Value passed to `go test -coverpkg`. The default instruments every package in the module so a test in package A can attribute coverage to source in package B. Set to `""` to disable cross-package attribution (faster, smaller profiles). When non-empty, GoCrunch resolves the module root via `go env GOMOD` and runs `go test` from there so `./...` means "every package in the module". |
+| `gocrunch.parallelism` | `0` | Concurrent test runs during **Run All / Refresh Coverage**. `0` = auto (CPU count). Set to `1` to run sequentially (easier to read the output channel), or any positive integer to cap parallelism. |
 | `gocrunch.autoRunOnSave` | `false` | Reserved for post-MVP auto re-run. |
 
 ## Install (local)

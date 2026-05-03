@@ -20,10 +20,12 @@ export class CoverageDecorations implements vscode.Disposable {
       overviewRulerColor: '#3fb950',
       overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
+    // Neutral grey — red is reserved for failing tests so an uncovered line
+    // doesn't masquerade as a regression.
     this.uncovered = vscode.window.createTextEditorDecorationType({
-      gutterIconPath: gutterSvgUri('#f85149'),
+      gutterIconPath: gutterSvgUri('#9d9d9d'),
       gutterIconSize: 'contain',
-      overviewRulerColor: '#f85149',
+      overviewRulerColor: '#9d9d9d',
       overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
     this.partial = vscode.window.createTextEditorDecorationType({

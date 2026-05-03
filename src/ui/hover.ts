@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { CoverageStore } from '../state/coverageStore';
 import { FailureStore } from '../state/failureStore';
+import { TestRegistry } from '../state/testRegistry';
 import { TestLocator } from '../goTest/testLocator';
 
 export class CoverageHoverProvider implements vscode.HoverProvider {
@@ -9,6 +10,7 @@ export class CoverageHoverProvider implements vscode.HoverProvider {
     private readonly store: CoverageStore,
     private readonly locator: TestLocator,
     private readonly failureStore: FailureStore,
+    private readonly registry: TestRegistry,
   ) {}
 
   async provideHover(
@@ -36,7 +38,7 @@ export class CoverageHoverProvider implements vscode.HoverProvider {
       return new vscode.Hover(md);
     }
 
-    const packageDir = path.dirname(document.uri.fsPath);
+    const sourceDir = path.dirname(document.uri.fsPath);
     const failCount = info.failingBy.size;
     // Failing first, then passing, alphabetic within each group — so the
     // problem you care about is at the top of the list.
@@ -50,11 +52,18 @@ export class CoverageHoverProvider implements vscode.HoverProvider {
         ? `**GoCrunch:** $(error) ${failCount} failing of ${tests.length} test${tests.length === 1 ? '' : 's'}`
         : `**GoCrunch:** $(pass) covered by ${tests.length} test${tests.length === 1 ? '' : 's'}`;
     md.appendMarkdown(`${header}\n\n`);
-    const locations = await Promise.all(tests.map((t) => this.locator.find(packageDir, t)));
+    // Each test may live in a different package than the file under hover
+    // (cross-package coverage). Resolve via registry; fall back to the source
+    // dir when we don't yet know — that's still correct for same-package tests.
+    const testPackageDirs = tests.map((t) => this.registry.get(t) ?? sourceDir);
+    const locations = await Promise.all(
+      tests.map((t, i) => this.locator.find(testPackageDirs[i], t)),
+    );
     for (let i = 0; i < tests.length; i++) {
       const t = tests[i];
       const loc = locations[i];
-      const runArgs = encodeURIComponent(JSON.stringify({ testName: t, packageDir }));
+      const pkgDir = testPackageDirs[i];
+      const runArgs = encodeURIComponent(JSON.stringify({ testName: t, packageDir: pkgDir }));
       const runLink = `command:gocrunch.runTest?${runArgs}`;
       const debugLink = `command:gocrunch.debugTest?${runArgs}`;
       const failed = info.failingBy.has(t);
@@ -64,7 +73,7 @@ export class CoverageHoverProvider implements vscode.HoverProvider {
         ? `[${nameMd}](command:gocrunch.openTest?${encodeURIComponent(JSON.stringify(loc))} "Go to definition")`
         : nameMd;
       const outputLink =
-        failed && this.failureStore.get(packageDir, t)
+        failed && this.failureStore.get(pkgDir, t)
           ? ` · [output](command:gocrunch.showFailure?${runArgs} "Show failure output")`
           : '';
       md.appendMarkdown(
