@@ -1,12 +1,14 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { CoverageStore } from '../state/coverageStore';
+import { FailureStore } from '../state/failureStore';
 import { TestLocator } from '../goTest/testLocator';
 
 export class CoverageHoverProvider implements vscode.HoverProvider {
   constructor(
     private readonly store: CoverageStore,
     private readonly locator: TestLocator,
+    private readonly failureStore: FailureStore,
   ) {}
 
   async provideHover(
@@ -61,7 +63,13 @@ export class CoverageHoverProvider implements vscode.HoverProvider {
       const label = loc
         ? `[${nameMd}](command:gocrunch.openTest?${encodeURIComponent(JSON.stringify(loc))} "Go to definition")`
         : nameMd;
-      md.appendMarkdown(`- ${icon} ${label} — [run](${runLink}) · [debug](${debugLink})\n`);
+      const outputLink =
+        failed && this.failureStore.get(packageDir, t)
+          ? ` · [output](command:gocrunch.showFailure?${runArgs} "Show failure output")`
+          : '';
+      md.appendMarkdown(
+        `- ${icon} ${label} — [run](${runLink}) · [debug](${debugLink})${outputLink}\n`,
+      );
     }
     if (info.mixed) {
       md.appendMarkdown('\n_partial: some blocks on this line are uncovered._');

@@ -36,6 +36,10 @@
       {
         "command": "gocrunch.openTest",
         "title": "GoCrunch: Open Test Definition"
+      },
+      {
+        "command": "gocrunch.showFailure",
+        "title": "GoCrunch: Show Failure Output"
       }
     ],
     "configuration": {
@@ -55,6 +59,11 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically rerun affected tests on save (post-MVP)."
+        },
+        "gocrunch.coverPkg": {
+          "type": "string",
+          "default": "./...",
+          "description": "Value passed to 'go test -coverpkg'. Default './...' instruments every package in the module, so a test in package A can attribute coverage to source in package B. Set to an empty string to disable cross-package attribution (faster, smaller profiles)."
         }
       }
     }

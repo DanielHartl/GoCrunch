@@ -4,6 +4,7 @@ import { GoTestCodeLensProvider } from './ui/codeLens';
 import { CoverageDecorations } from './ui/decorations';
 import { CoverageHoverProvider } from './ui/hover';
 import { CoverageStore } from './state/coverageStore';
+import { FailureStore } from './state/failureStore';
 import {
   listAllTests,
   runSingleTest,
@@ -19,11 +20,94 @@ interface RunCommandArgs {
   packageDir: string;
 }
 
+const FAILURE_SCHEME = 'gocrunch-failure';
+
+function buildFailureUri(packageDir: string, testName: string): vscode.Uri {
+  // Subtests contain '/'. Sanitise so the editor tab title reads cleanly;
+  // the real lookup key is in the query.
+  const safeTitle = testName.replace(/[/\\:*?"<>|]/g, '_');
+  const params = new URLSearchParams({ test: testName, pkg: packageDir });
+  return vscode.Uri.parse(`${FAILURE_SCHEME}:/${safeTitle}.failure.txt?${params.toString()}`);
+}
+
+// Matches Go test / panic location prefixes like "math_test.go:13",
+// "math_test.go:13:7", or fully-qualified "/abs/path/foo.go:42". Path chars
+// are restricted enough to avoid greedy matches across whitespace; line/col
+// are required digits.
+const GO_LOCATION_RE = /([A-Za-z]:[\\/][^\s:()<>"']+|[\w./\\-]+)\.go:(\d+)(?::(\d+))?/g;
+
+class FailureDocumentLinkProvider implements vscode.DocumentLinkProvider {
+  provideDocumentLinks(document: vscode.TextDocument): vscode.DocumentLink[] {
+    if (document.uri.scheme !== FAILURE_SCHEME) {
+      return [];
+    }
+    const params = new URLSearchParams(document.uri.query);
+    const pkg = params.get('pkg');
+    if (!pkg) {
+      return [];
+    }
+    const text = document.getText();
+    const links: vscode.DocumentLink[] = [];
+    for (const m of text.matchAll(GO_LOCATION_RE)) {
+      if (m.index === undefined) {
+        continue;
+      }
+      const [whole, base, lineStr, colStr] = m;
+      const file = `${base}.go`;
+      const filePath = path.isAbsolute(file) ? file : path.join(pkg, file);
+      const line = Math.max(0, parseInt(lineStr, 10) - 1);
+      const character = colStr ? Math.max(0, parseInt(colStr, 10) - 1) : 0;
+      const range = new vscode.Range(
+        document.positionAt(m.index),
+        document.positionAt(m.index + whole.length),
+      );
+      const args = encodeURIComponent(JSON.stringify({ filePath, line, character }));
+      const link = new vscode.DocumentLink(
+        range,
+        vscode.Uri.parse(`command:gocrunch.openTest?${args}`),
+      );
+      link.tooltip = `Open ${file}:${line + 1}`;
+      links.push(link);
+    }
+    return links;
+  }
+}
+
+class FailureContentProvider implements vscode.TextDocumentContentProvider {
+  private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this._onDidChange.event;
+
+  constructor(private readonly store: FailureStore) {
+    store.onChange((e) => {
+      this._onDidChange.fire(buildFailureUri(e.packageDir, e.testName));
+    });
+  }
+
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    const params = new URLSearchParams(uri.query);
+    const pkg = params.get('pkg') ?? '';
+    const test = params.get('test') ?? '';
+    const rec = this.store.get(pkg, test);
+    if (!rec) {
+      return `No captured failure output for ${test || '(unknown)'} in ${pkg || '(unknown)'}.\n\nRun the test again to populate.`;
+    }
+    const ts = new Date(rec.timestamp).toLocaleString();
+    const header = [
+      `Test:     ${rec.testName}`,
+      `Package:  ${rec.packageDir}`,
+      `Duration: ${rec.durationMs}ms`,
+      `Captured: ${ts}`,
+    ].join('\n');
+    return `${header}\n${'-'.repeat(60)}\n${rec.output}\n`;
+  }
+}
+
 function getRunOptions(channel: vscode.OutputChannel): RunOptions {
   const cfg = vscode.workspace.getConfiguration('gocrunch');
   return {
     goPath: cfg.get<string>('goPath', 'go'),
     timeoutSec: cfg.get<number>('testTimeout', 60),
+    coverPkg: cfg.get<string>('coverPkg', './...'),
     channel,
   };
 }
@@ -53,6 +137,20 @@ async function ingestResultIntoStore(
   }
 }
 
+function recordFailureOutput(failureStore: FailureStore, result: TestRunResult): void {
+  if (result.passed) {
+    failureStore.delete(result.packageDir, result.testName);
+    return;
+  }
+  failureStore.set({
+    testName: result.testName,
+    packageDir: result.packageDir,
+    output: result.failureOutput ?? '(no output captured)',
+    durationMs: result.durationMs,
+    timestamp: Date.now(),
+  });
+}
+
 function buildImportPathToDirMap(enumerations: TestEnumeration[]): Map<string, string> {
   const m = new Map<string, string>();
   for (const e of enumerations) {
@@ -71,6 +169,17 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(decorations);
 
   const testLocator = new TestLocator();
+  const failureStore = new FailureStore();
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      FAILURE_SCHEME,
+      new FailureContentProvider(failureStore),
+    ),
+    vscode.languages.registerDocumentLinkProvider(
+      { scheme: FAILURE_SCHEME },
+      new FailureDocumentLinkProvider(),
+    ),
+  );
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.text = 'GoCrunch: idle';
@@ -126,7 +235,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.languages.registerHoverProvider(
       { language: 'go', scheme: 'file' },
-      new CoverageHoverProvider(store, testLocator),
+      new CoverageHoverProvider(store, testLocator, failureStore),
     ),
   );
 
@@ -160,6 +269,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         }
         await ingestResultIntoStore(store, result, importPathToDir, channel);
+        recordFailureOutput(failureStore, result);
         decorations.refreshAll();
         if (cp) {
           await store.saveTo(cp);
@@ -216,6 +326,7 @@ export function activate(context: vscode.ExtensionContext): void {
           importPathToDir = buildImportPathToDirMap(enumerations);
           // a full run is the source of truth — drop stale per-test entries
           store.clear();
+          failureStore.clear();
 
           const total = enumerations.reduce((n, e) => n + e.tests.length, 0);
           if (total === 0) {
@@ -247,6 +358,7 @@ export function activate(context: vscode.ExtensionContext): void {
                   `[${result.passed ? 'PASS' : 'FAIL'}] ${e.packageImportPath}.${test} (${result.durationMs}ms)`,
                 );
                 await ingestResultIntoStore(store, result, importPathToDir, channel);
+                recordFailureOutput(failureStore, result);
               } catch (err) {
                 failed++;
                 channel.appendLine(`[ERROR] ${test}: ${(err as Error).message}`);
@@ -271,6 +383,27 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('gocrunch.refreshCoverage', () => {
       vscode.commands.executeCommand('gocrunch.runAllTests');
     }),
+    vscode.commands.registerCommand(
+      'gocrunch.showFailure',
+      async (arg?: RunCommandArgs) => {
+        if (!arg?.testName || !arg.packageDir) {
+          return;
+        }
+        if (!failureStore.get(arg.packageDir, arg.testName)) {
+          vscode.window.showInformationMessage(
+            `GoCrunch: no captured failure output for ${arg.testName}. Run the test to capture it.`,
+          );
+          return;
+        }
+        const uri = buildFailureUri(arg.packageDir, arg.testName);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(doc, {
+          preview: true,
+          viewColumn: vscode.ViewColumn.Beside,
+          preserveFocus: false,
+        });
+      },
+    ),
     vscode.commands.registerCommand(
       'gocrunch.openTest',
       async (arg?: { filePath: string; line: number; character: number }) => {

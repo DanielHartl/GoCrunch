@@ -9,6 +9,9 @@ export interface TestRunResult {
   packageDir: string;
   passed: boolean;
   output: string;
+  // Concatenated `output` events plus stderr — populated for failing runs so
+  // the hover "output" link can show the stack trace / failure message.
+  failureOutput?: string;
   coverProfilePath?: string;
   durationMs: number;
 }
@@ -25,6 +28,10 @@ interface GoTestEvent {
 export interface RunOptions {
   goPath: string;
   timeoutSec: number;
+  // Empty string disables cross-package attribution. Otherwise passed verbatim
+  // to `go test -coverpkg`. When non-empty, the test runs from the module root
+  // so patterns like "./..." mean "every package in the module".
+  coverPkg: string;
   channel: vscode.OutputChannel;
 }
 
@@ -89,6 +96,21 @@ export async function runSingleTest(
 ): Promise<TestRunResult> {
   const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'gocrunch-'));
   const coverFile = path.join(tmpDir, 'cover.out');
+
+  // With -coverpkg the pattern is interpreted relative to cwd, so we run from
+  // the module root and target the test package via its relative path. Without
+  // it, the historical behaviour (cwd=packageDir, target=".") is preserved.
+  let cwd = packageDir;
+  let target = '.';
+  if (opts.coverPkg) {
+    const moduleRoot = await findModuleRoot(packageDir, opts);
+    if (moduleRoot && moduleRoot !== packageDir) {
+      const rel = path.relative(moduleRoot, packageDir).split(path.sep).join('/');
+      cwd = moduleRoot;
+      target = rel ? `./${rel}` : './';
+    }
+  }
+
   const args = [
     'test',
     '-run',
@@ -97,17 +119,19 @@ export async function runSingleTest(
     '-coverprofile',
     coverFile,
     '-covermode=set',
+    ...(opts.coverPkg ? ['-coverpkg', opts.coverPkg] : []),
     '-json',
     `-timeout=${opts.timeoutSec}s`,
-    '.',
+    target,
   ];
 
   const start = Date.now();
-  const result = await runGoCommand(opts.goPath, args, packageDir, opts.channel);
+  const result = await runGoCommand(opts.goPath, args, cwd, opts.channel);
   const durationMs = Date.now() - start;
 
   let passed = result.exitCode === 0;
   let sawTerminalEvent = false;
+  const outputChunks: string[] = [];
   const events = parseJsonEvents(result.stdout);
   for (const ev of events) {
     if (ev.Test === testName && (ev.Action === 'pass' || ev.Action === 'fail')) {
@@ -118,6 +142,7 @@ export async function runSingleTest(
     }
     if (ev.Action === 'output' && ev.Output) {
       opts.channel.append(ev.Output);
+      outputChunks.push(ev.Output);
     }
   }
   if (result.stderr) {
@@ -137,11 +162,21 @@ export async function runSingleTest(
     coverProfilePath = coverFile;
   }
 
+  let failureOutput: string | undefined;
+  if (!passed) {
+    const parts = [outputChunks.join('')];
+    if (result.stderr) {
+      parts.push(result.stderr);
+    }
+    failureOutput = parts.join('').trim() || `(no output captured; exit code ${result.exitCode})`;
+  }
+
   return {
     testName,
     packageDir,
     passed,
     output: result.stdout,
+    failureOutput,
     coverProfilePath,
     durationMs,
   };
@@ -205,6 +240,39 @@ function parseJsonEvents(stdout: string): GoTestEvent[] {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const moduleRootCache = new Map<string, string | null>();
+
+/**
+ * Resolve the module root for a given package dir via `go env GOMOD`. Returns
+ * undefined for packages outside any module (legacy GOPATH or transient errors).
+ * Cached per-dir for the lifetime of the extension host.
+ */
+async function findModuleRoot(packageDir: string, opts: RunOptions): Promise<string | undefined> {
+  const cached = moduleRootCache.get(packageDir);
+  if (cached !== undefined) {
+    return cached ?? undefined;
+  }
+  try {
+    const res = await runGoCommand(opts.goPath, ['env', 'GOMOD'], packageDir, opts.channel);
+    if (res.exitCode !== 0) {
+      moduleRootCache.set(packageDir, null);
+      return undefined;
+    }
+    const gomod = res.stdout.trim();
+    // Outside a module: "" on Unix, "NUL" on Windows, "/dev/null" elsewhere, or "off".
+    if (!gomod || gomod === 'NUL' || gomod === '/dev/null' || gomod === 'off') {
+      moduleRootCache.set(packageDir, null);
+      return undefined;
+    }
+    const root = path.dirname(gomod);
+    moduleRootCache.set(packageDir, root);
+    return root;
+  } catch {
+    moduleRootCache.set(packageDir, null);
+    return undefined;
+  }
 }
 
 async function pathExists(p: string): Promise<boolean> {
